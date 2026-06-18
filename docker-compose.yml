@@ -1,0 +1,76 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# docker-compose.yml
+#
+# Ye file dono services (FastAPI + Streamlit) ko ek saath manage karta hai.
+#
+# Sirf EK command se dono start ho jayenge:
+#   docker-compose up --build
+#
+# Sirf EK command se dono band ho jayenge:
+#   docker-compose down
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── Service 1: FastAPI Backend ──────────────────────────────────────────────
+  api:
+    # Dockerfile se build karo (same folder mein)
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    # Container ka naam (debug mein kaam aata hai)
+    container_name: arxiv-api
+
+    # Ports: "HOST:CONTAINER"
+    # Matlab: tere browser mein localhost:8000 → container ke port 8000 pe jao
+    ports:
+      - "8000:8000"
+
+    # .env file se environment variables load karo
+    # (GROQ_API_KEY yahan se aayega — file safe rahegi)
+    env_file:
+      - .env
+
+    # Volumes: tera local folder ↔ container folder sync karo
+    # Matlab: data/papers/ mein PDF daalo → container ko bhi milega
+    volumes:
+      - ./data:/app/data
+
+    # Health check: kya API theek se chal rahi hai?
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ── Service 2: Streamlit Frontend ──────────────────────────────────────────
+  streamlit:
+    build:
+      context: .
+      dockerfile: Dockerfile.streamlit
+
+    container_name: arxiv-streamlit
+
+    ports:
+      - "8501:8501"
+
+    env_file:
+      - .env
+
+    volumes:
+      - ./data:/app/data
+
+    # depends_on matlab: API pehle start ho, phir Streamlit start ho
+    depends_on:
+      - api
+
+    # Streamlit ko batao: API kahan hai (container name use karo, localhost nahi)
+    environment:
+      - API_URL=http://api:8000
+
+# ── Named Volume (optional) ────────────────────────────────────────────────────
+# Vector store data persist karne ke liye
+volumes:
+  arxiv_data:

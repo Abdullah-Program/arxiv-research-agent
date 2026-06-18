@@ -1,0 +1,31 @@
+# .dockerignore
+# Ye files/folders container mein NAHI jayenge
+# (image size kam hogi, build fast hoga)
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Git
+.git/
+.gitignore
+
+# Secrets (kabhi bhi container mein mat daalo)
+# .env file docker-compose mein env_file se load hoti hai
+# .env
+
+# Data (volumes se mount hoga)
+data/vector_store/
+
+# Dev files
+*.md
+.agents/
+.gemini/
+
+# IDE
+.vscode/
+.idea/
