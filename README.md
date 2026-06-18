@@ -153,3 +153,6 @@ arxiv-research-agent/
 ## 📄 License
 
 MIT License — feel free to use and modify.
+
+## 🌐 Live Demo
+👉 https://arxiv-research-agent-vcsa8qizikqspclkfjzvcm.streamlit.app/
