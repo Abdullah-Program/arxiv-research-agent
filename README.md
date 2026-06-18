@@ -145,6 +145,9 @@ arxiv-research-agent/
 - **GPT** — Language Models are Few-Shot Learners
 - **Denoising Diffusion Probabilistic Models**
 
+## 📸 SnapShot
+<img width="1919" height="1036" alt="image" src="https://github.com/user-attachments/assets/6f131a87-9e23-4e23-b7ef-1fd30fe0584c" />
+
 ---
 
 ## 📄 License
