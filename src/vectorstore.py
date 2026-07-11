@@ -8,6 +8,9 @@ Used by: tools.py, api.py
 
 import os
 import uuid
+import re
+import math
+from collections import Counter
 import numpy as np
 from pathlib import Path
 from typing import List, Dict, Any
@@ -23,6 +26,54 @@ VECTOR_STORE_DIR = Path(__file__).resolve().parent.parent / "data" / "vector_sto
 COLLECTION_NAME  = "arxiv_papers"
 
 
+# ── BM25 Sparse Search Helpers ────────────────────────────────────────────────
+def tokenize(text: str) -> List[str]:
+    """Simple alphanumeric lowercase word tokenization."""
+    return re.findall(r'\w+', text.lower())
+
+
+class SimpleBM25:
+    """Pure Python implementation of BM25 algorithm for sparse search."""
+    def __init__(self, corpus: List[List[str]], k1: float = 1.5, b: float = 0.75):
+        self.k1 = k1
+        self.b = b
+        self.corpus_size = len(corpus)
+        self.avgdl = sum(len(doc) for doc in corpus) / self.corpus_size if self.corpus_size > 0 else 0
+        self.doc_freqs = []
+        self.doc_len = []
+        self.df = Counter()
+        
+        for doc in corpus:
+            self.doc_len.append(len(doc))
+            frequencies = Counter(doc)
+            self.doc_freqs.append(frequencies)
+            for word in frequencies.keys():
+                self.df[word] += 1
+                
+        self.idf = {}
+        for word, freq in self.df.items():
+            # BM25 IDF formula with smoothing
+            self.idf[word] = math.log(1.0 + (self.corpus_size - freq + 0.5) / (freq + 0.5))
+
+    def get_scores(self, query: List[str]) -> List[float]:
+        scores = []
+        for i in range(self.corpus_size):
+            score = 0.0
+            doc_len = self.doc_len[i]
+            freqs = self.doc_freqs[i]
+            for word in query:
+                if word not in freqs:
+                    continue
+                tf = freqs[word]
+                idf = self.idf.get(word, 0.0)
+                # BM25 formula
+                numerator = tf * (self.k1 + 1)
+                denominator = tf + self.k1 * (1.0 - self.b + self.b * (doc_len / self.avgdl))
+                score += idf * (numerator / denominator)
+            scores.append(score)
+        return scores
+
+
 # ── VectorStore Class ─────────────────────────────────────────────────────────
 class VectorStore:
     """
@@ -32,6 +83,7 @@ class VectorStore:
         vs = VectorStore()
         vs.add_documents(chunks, embeddings)
         results = vs.semantic_search(query, top_k=5)
+        results = vs.hybrid_search(query, top_k=5)
         papers  = vs.list_papers()
     """
 
@@ -168,6 +220,77 @@ class VectorStore:
                     )
 
         print(f"[vectorstore] Query '{query[:50]}...' → {len(retrieved)} results")
+        return retrieved
+
+    def hybrid_search(
+        self,
+        query: str,
+        top_k: int = 5,
+        score_threshold: float = 0.0,
+        source_filter: str | None = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Fast hybrid search: Dense (ChromaDB) + Sparse (BM25) fused via RRF.
+
+        KEY OPTIMIZATION: BM25 runs only on the dense candidate pool (top_k*4),
+        NOT on all documents in the collection. This keeps latency O(top_k)
+        instead of O(n_docs), which matters a lot at 5k+ chunks.
+        """
+        if self.collection.count() == 0:
+            return []
+
+        # 1. Dense retrieval — fetch a larger candidate pool for reranking
+        candidate_k = min(top_k * 4, self.collection.count())
+        dense_results = self.semantic_search(
+            query, top_k=candidate_k,
+            score_threshold=score_threshold,
+            source_filter=source_filter,
+        )
+
+        if not dense_results:
+            return []
+
+        # 2. BM25 on the dense candidate pool only (fast — no full-collection scan)
+        query_tokens  = tokenize(query)
+        corpus_texts  = [r["content"] for r in dense_results]
+        corpus_tokens = [tokenize(t) for t in corpus_texts]
+
+        bm25   = SimpleBM25(corpus_tokens)
+        scores = bm25.get_scores(query_tokens)
+
+        # Build sparse ranking from candidate pool
+        sparse_ranked = sorted(
+            [(dense_results[i]["id"], scores[i]) for i in range(len(dense_results)) if scores[i] > 0],
+            key=lambda x: x[1], reverse=True,
+        )
+
+        # 3. Reciprocal Rank Fusion
+        k          = 60
+        rrf_scores = {}
+        doc_map    = {r["id"]: r for r in dense_results}
+
+        for rank, item in enumerate(dense_results, start=1):
+            did = item["id"]
+            rrf_scores[did] = rrf_scores.get(did, 0.0) + 1.0 / (k + rank)
+
+        for rank, (did, _) in enumerate(sparse_ranked, start=1):
+            rrf_scores[did] = rrf_scores.get(did, 0.0) + 1.0 / (k + rank)
+
+        sorted_ids = sorted(rrf_scores, key=lambda x: rrf_scores[x], reverse=True)
+
+        retrieved = []
+        for rank, did in enumerate(sorted_ids[:top_k], start=1):
+            d = doc_map[did]
+            retrieved.append({
+                "id":               d["id"],
+                "content":          d["content"],
+                "metadata":         d["metadata"],
+                "similarity_score": d["similarity_score"],
+                "rrf_score":        round(rrf_scores[did], 6),
+                "rank":             rank,
+            })
+
+        print(f"[vectorstore] Hybrid '{query[:50]}...' → {len(retrieved)} results (pool={len(dense_results)})")
         return retrieved
 
     # ── Utility ────────────────────────────────────────────────────────────────
