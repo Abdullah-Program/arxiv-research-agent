@@ -1,9 +1,17 @@
-.env
-.venv/
+# .gitignore file banao
+cat > .gitignore << 'EOF'
+# Dependencies
+frontend/node_modules/
 __pycache__/
 *.pyc
-*.pyo
+.venv/
+.env
+
+# Data (large files)
 data/vector_store/
-*.egg-info/
-dist/
-.DS_Store
+data/chroma_db/
+*.db
+
+# Build
+frontend/dist/
+EOF
